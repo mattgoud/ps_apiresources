@@ -34,6 +34,7 @@ class ShipmentEndpointTest extends ApiTestCase
     private static int $productId;
     private static int $productQuantity;
     private static int $carrierId;
+    private static int $secondCarrierId;
 
     public static function setUpBeforeClass(): void
     {
@@ -44,7 +45,7 @@ class ShipmentEndpointTest extends ApiTestCase
             self::markTestSkipped('Shipment domain does not exist on this PrestaShop version');
         }
 
-        self::createApiClient(['shipment_read']);
+        self::createApiClient(['shipment_read', 'shipment_write']);
 
         $orderRow = \Db::getInstance()->getRow(
             'SELECT `id_order` FROM `' . _DB_PREFIX_ . 'orders` ORDER BY `id_order` ASC'
@@ -58,10 +59,11 @@ class ShipmentEndpointTest extends ApiTestCase
         self::$productId = (int) $orderDetailRow['product_id'];
         self::$productQuantity = (int) $orderDetailRow['product_quantity'];
 
-        $carrierRow = \Db::getInstance()->getRow(
-            'SELECT `id_carrier` FROM `' . _DB_PREFIX_ . 'carrier` WHERE `deleted` = 0 AND `active` = 1 ORDER BY `id_carrier` ASC'
+        $carrierRows = \Db::getInstance()->executeS(
+            'SELECT `id_carrier` FROM `' . _DB_PREFIX_ . 'carrier` WHERE `deleted` = 0 AND `active` = 1 ORDER BY `id_carrier` ASC LIMIT 2'
         );
-        self::$carrierId = (int) $carrierRow['id_carrier'];
+        self::$carrierId = (int) $carrierRows[0]['id_carrier'];
+        self::$secondCarrierId = (int) ($carrierRows[1]['id_carrier'] ?? $carrierRows[0]['id_carrier']);
     }
 
     public static function tearDownAfterClass(): void
@@ -73,6 +75,8 @@ class ShipmentEndpointTest extends ApiTestCase
     public static function getProtectedEndpoints(): iterable
     {
         yield 'get endpoint' => ['GET', '/orders/1/shipments/1'];
+        yield 'switch carrier endpoint' => ['PATCH', '/shipments/1/carriers'];
+        yield 'fulfill endpoint' => ['PATCH', '/shipments/1/fulfill'];
     }
 
     /**
@@ -115,6 +119,48 @@ class ShipmentEndpointTest extends ApiTestCase
         $this->assertArrayHasKey(self::$productId, $response['selectedProducts']);
         // Reported as 0 for every product until PrestaShop/PrestaShop#42092 lands
         $this->assertSame(self::$productQuantity, $response['selectedProducts'][self::$productId]);
+    }
+
+    public function testSwitchShipmentCarrier(): void
+    {
+        $shipmentId = $this->createFixtureShipment();
+
+        $response = $this->partialUpdateItem(
+            '/shipments/' . $shipmentId . '/carriers',
+            ['carrierId' => self::$secondCarrierId],
+            ['shipment_write'],
+            Response::HTTP_NO_CONTENT
+        );
+        $this->assertNull($response);
+
+        $shipment = $this->getItem('/orders/' . self::$orderId . '/shipments/' . $shipmentId, ['shipment_read']);
+        $this->assertEquals(self::$secondCarrierId, $shipment['carrierId']);
+    }
+
+    public function testFulfillShipment(): void
+    {
+        $shipmentId = $this->createFixtureShipment();
+
+        $response = $this->partialUpdateItem(
+            '/shipments/' . $shipmentId . '/fulfill',
+            ['trackingNumber' => 'TRACK-12345'],
+            ['shipment_write'],
+            Response::HTTP_NO_CONTENT
+        );
+        $this->assertNull($response);
+
+        $shipment = $this->getItem('/orders/' . self::$orderId . '/shipments/' . $shipmentId, ['shipment_read']);
+        $this->assertEquals('TRACK-12345', $shipment['trackingNumber']);
+    }
+
+    public function testFulfillShipmentNotFound(): void
+    {
+        $this->partialUpdateItem(
+            '/shipments/999999/fulfill',
+            ['trackingNumber' => 'TRACK-99999'],
+            ['shipment_write'],
+            Response::HTTP_NOT_FOUND
+        );
     }
 
     public function testGetShipmentNotFound(): void

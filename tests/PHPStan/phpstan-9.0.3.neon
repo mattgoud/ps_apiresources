@@ -24,3 +24,7 @@ parameters:
             message: "#Class .*Shipment.* not found.#"
             identifier: class.notFound
             path: ../../src/ApiPlatform/Resources/Order/*
+        -
+            message: "#Class .*Shipment.* not found.#"
+            identifier: class.notFound
+            path: ../../src/ApiPlatform/Resources/Shipment/*
